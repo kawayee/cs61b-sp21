@@ -113,10 +113,54 @@ public class Model extends Observable {
         // TODO: Modify this.board (and perhaps this.score) to account
         // for the tilt to the Side SIDE. If the board changed, set the
         // changed local variable to true.
+        board.setViewingPerspective(side);
+        
+        int size = board.size();
+        for (int col = 0; col < size; col++){
+            changed = tiltOneColHelper(board, col, side) || changed;
+        }
 
+        board.setViewingPerspective(Side.NORTH);
         checkGameOver();
         if (changed) {
             setChanged();
+        }
+        return changed;
+    }
+    
+    private boolean tiltOneColHelper(Board b, int col, Side side){
+        int size = b.size();
+        int targetRow = size - 1;
+        int preMergedRow = -1;
+        boolean changed = false;
+        for (int row = size - 1; row >= 0; row--){
+            Tile t = b.tile(col, row);
+            if (t == null) {
+                continue;
+            }
+            //如果targetRow有方块
+            Tile target = b.tile(col, targetRow);
+            if(target != null){
+                if(targetRow != row){
+                    if(target.value() == t.value() && targetRow != preMergedRow){
+                        //go to targetRow, merge
+                        b.move(col, targetRow, t);
+                        changed = true;
+                        score += board.tile(col, targetRow).value();
+                        preMergedRow = targetRow;
+                        targetRow -= 1;
+                    }else{
+                        //go to targetRow - 1, dont merge
+                        b.move(col, targetRow - 1, t);
+                        changed = true;
+                        targetRow -= 1;
+                    }
+                }
+            }else{
+                //如果targetRow没有方块
+                b.move(col, targetRow, t);
+                changed = true;
+            }            
         }
         return changed;
     }
@@ -138,6 +182,14 @@ public class Model extends Observable {
      * */
     public static boolean emptySpaceExists(Board b) {
         // TODO: Fill in this function.
+        int bsize = b.size();
+        for(int i = 0; i < bsize; i++){
+            for(int j = 0; j < bsize; j++){
+                if(b.tile(i, j) == null){
+                    return true;
+                }
+            }
+        }
         return false;
     }
 
@@ -148,6 +200,14 @@ public class Model extends Observable {
      */
     public static boolean maxTileExists(Board b) {
         // TODO: Fill in this function.
+        int bsize = b.size();
+        for(int i = 0; i < bsize; i++){
+            for(int j = 0; j < bsize; j++){
+                if(b.tile(i, j) != null && b.tile(i, j).value() == MAX_PIECE){
+                    return true;
+                }
+            }
+        }
         return false;
     }
 
@@ -159,6 +219,25 @@ public class Model extends Observable {
      */
     public static boolean atLeastOneMoveExists(Board b) {
         // TODO: Fill in this function.
+        // 情况1：存在空格，必然可以移动
+        if (emptySpaceExists(b)) {
+            return true;
+        }
+        // 情况2：检查所有相邻格子是否有相同值
+        int size = b.size();
+        for (int col = 0; col < size; col++) {
+            for (int row = 0; row < size; row++) {
+                int val = b.tile(col, row).value();
+                // 检查右边邻居
+                if (col + 1 < size && b.tile(col + 1, row).value() == val) {
+                    return true;
+                }
+                // 检查上方邻居
+                if (row + 1 < size && b.tile(col, row + 1).value() == val) {
+                    return true;
+                }
+            }
+        }
         return false;
     }
 
