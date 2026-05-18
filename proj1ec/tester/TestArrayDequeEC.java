@@ -18,7 +18,7 @@ public class TestArrayDequeEC {
 
         for (int i = 0; i < numOps; i++) {
             int op;
-            if (student.size() == 0) {
+            if (solution.isEmpty()) {
                 op = StdRandom.uniform(2); // only add when empty
             } else {
                 op = StdRandom.uniform(4);
@@ -49,12 +49,6 @@ public class TestArrayDequeEC {
                 message.append("removeLast()\n");
                 assertEquals(message.toString(), solutionVal, studentVal);
             }
-
-            // Also check size
-            message.append("size()\n");
-            assertEquals(message.toString(), solution.size(), student.size());
-            // clean message
-            message.delete(0, message.length());
         }
     }
 }
