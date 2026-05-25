@@ -72,10 +72,6 @@ public class BSTMap<K extends Comparable<K>, V> implements Map61B<K, V> {
         }
     }
 
-    public boolean isEmpty() {
-        return size() == 0;
-    }
-
     @Override
     public int size() {
         return size(root);
@@ -131,7 +127,6 @@ public class BSTMap<K extends Comparable<K>, V> implements Map61B<K, V> {
     @Override
     public Set<K> keySet() {
         HashSet<K> keys = new HashSet<>();
-        if (isEmpty()) return keys;
         keySet(root, keys);
         return keys;
     }
