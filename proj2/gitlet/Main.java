@@ -54,6 +54,14 @@ public class Main {
                 validateNumArgs(args, 1);
                 Repository.globalLog();
                 break;
+            case "find":
+                validateNumArgs(args, 2);
+                Repository.find(args[1]);
+                break;
+            case "status":
+                validateNumArgs(args, 1);
+                Repository.status();
+                break;
             case "checkout":
                 if (args.length == 3 && args[1].equals("--")) {
                     // java gitlet.Main checkout -- [file name]
@@ -68,6 +76,22 @@ public class Main {
                     System.out.println("Incorrect operands.");
                     System.exit(0);
                 }
+                break;
+            case "branch":
+                validateNumArgs(args, 2);
+                Repository.branch(args[1]);
+                break;
+            case "rm-branch":
+                validateNumArgs(args, 2);
+                Repository.rmBranch(args[1]);
+                break;
+            case "reset":
+                validateNumArgs(args, 2);
+                Repository.reset(args[1]);
+                break;
+            case "merge":
+                validateNumArgs(args, 2);
+                Repository.merge(args[1]);
                 break;
             default:
                 System.out.println("No command with that name exists.");

@@ -179,6 +179,7 @@ public class Repository {
         // Advance current branch.
         setBranchCommitId(getHeadBranch(), commitId);
         stage.clearStage();
+        stage.saveStage();
     }
 
     /** Unstages the file, or stages it for removal.
@@ -282,13 +283,7 @@ public class Repository {
         }
         List<String> untrackedFiles = getUntrackedFiles();
         Commit targetCommit = Commit.readCommit(getBranchCommitId(branchName));
-        for (String file : untrackedFiles) {
-            if (targetCommit.containsFile(file)) {
-                System.out.println("There is an untracked file in the way; "
-                        + "delete it, or add and commit it first.");
-                System.exit(0);
-            }
-        }
+        checkUntrackedConflict(untrackedFiles, targetCommit);
 
         // Delete files tracked by current commit but not by target commit.
         Commit curCommit = getHeadCommit();
@@ -304,9 +299,227 @@ public class Repository {
             checkoutCommitFile(targetId, file);
         }
 
-        new StagingArea().clearStage();
         setHeadBranch(branchName);
+        StagingArea stage = StagingArea.readStage();
+        stage.clearStage();
+        stage.saveStage();
     }
+
+    /** If a working file is untracked in the current branch and would be overwritten, print. */
+    private static void checkUntrackedConflict(List<String> untrackedFiles, Commit targetCommit) {
+        for (String file : untrackedFiles) {
+            if (targetCommit.containsFile(file)) {
+                System.out.println("There is an untracked file in the way; "
+                        + "delete it, or add and commit it first.");
+                System.exit(0);
+            }
+        }
+    }
+
+    /** Prints ids of all commits with the given message. */
+    public static void find(String message) {
+        List<String> all = Utils.plainFilenamesIn(COMMITS_DIR);
+        boolean found = false;
+        if (all != null) {
+            for (String id : all) {
+                if (Commit.readCommit(id).getMessage().equals(message)) {
+                    System.out.println(id);
+                    found = true;
+                }
+            }
+        }
+        if (!found) {
+            System.out.println("Found no commit with that message.");
+        }
+    }
+
+    /** Displays branches, staged files, removed files, modifications, and untracked. */
+    public static void status() {
+        StagingArea stage = StagingArea.readStage();
+        TreeMap<String, String> addStage = stage.getAddStage();
+        TreeSet<String> rmStage = stage.getRemoveStage();
+        Commit head = getHeadCommit();
+        String headBranch = getHeadBranch();
+
+        // === Branches ===
+        System.out.println("=== Branches ===");
+        List<String> branches = Utils.plainFilenamesIn(BRANCHES_DIR);
+        if (branches != null) {
+            Collections.sort(branches);
+            for (String b : branches) {
+                System.out.println(b.equals(headBranch) ? "*" + b : b);
+            }
+        }
+        System.out.println();
+
+        // === Staged Files ===
+        System.out.println("=== Staged Files ===");
+        for (String f : addStage.keySet()) {
+            System.out.println(f);
+        }
+        System.out.println();
+
+        // === Removed Files ===
+        System.out.println("=== Removed Files ===");
+        for (String f : rmStage) {
+            System.out.println(f);
+        }
+        System.out.println();
+
+        // === Modifications Not Staged For Commit === (extra credit)
+        System.out.println("=== Modifications Not Staged For Commit ===");
+        TreeMap<String, String> mods = getModifiedNotStaged(head, stage);
+        for (Map.Entry<String, String> e : mods.entrySet()) {
+            System.out.println(e.getKey() + " " + e.getValue());
+        }
+        System.out.println();
+
+        // === Untracked Files === (extra credit)
+        System.out.println("=== Untracked Files ===");
+        List<String> untrackedFiles = getUntrackedFiles();
+        for (String f : untrackedFiles) {
+            System.out.println(f);
+        }
+        System.out.println();
+    }
+
+    /** Creates a new branch pointing at the current HEAD commit. */
+    public static void branch(String branchName) {
+        File branchFile = Utils.join(BRANCHES_DIR, branchName);
+        if (branchFile.exists()) {
+            System.out.println("A branch with that name already exists.");
+            System.exit(0);
+        }
+        setBranchCommitId(branchName, getHeadCommitId());
+    }
+
+    /** Deletes the branch with the given name. */
+    public static void rmBranch(String branchName) {
+        File branchFile = Utils.join(BRANCHES_DIR, branchName);
+        if (!branchFile.exists()) {
+            System.out.println("A branch with that name does not exist.");
+            System.exit(0);
+        }
+        if (branchName.equals(getHeadBranch())) {
+            System.out.println("Cannot remove the current branch.");
+            System.exit(0);
+        }
+        Utils.restrictedDelete(branchFile);
+    }
+
+    /** Checks out all files tracked by the given commit; moves current branch head.
+     * Check whether the commit exists.
+     * Check for untracked file conflicts.
+     *
+     * Restore the working directory to the snapshot of the target commit.
+     *
+     * Make the current branch point to the target commit.
+     * Clear the staging area. */
+    public static void reset(String shortId) {
+        String targetId = Commit.findCommitId(shortId);
+        if (targetId == null) {
+            System.out.println("No commit with that id exists.");
+            System.exit(0);
+        }
+        List<String> untrackedFiles = getUntrackedFiles();
+        Commit targetCommit = Commit.readCommit(targetId);
+        checkUntrackedConflict(untrackedFiles, targetCommit);
+
+        // Delete files tracked by current commit but not by target commit.
+        Commit curCommit = getHeadCommit();
+        for (String file : curCommit.getBlobs().keySet()) {
+            if (!targetCommit.containsFile(file)) {
+                Utils.restrictedDelete(Utils.join(CWD, file));
+            }
+        }
+
+        // Write all files tracked by target commit.
+        for (String file : targetCommit.getBlobs().keySet()) {
+            checkoutCommitFile(targetId, file);
+        }
+
+        setBranchCommitId(getHeadBranch(), targetId);
+        StagingArea stage = StagingArea.readStage();
+        stage.clearStage();
+        stage.saveStage();
+    }
+
+    /** Merges files from the given branch into the current branch.
+     * Check whether the staging area is empty.
+     * Check whether branchName exists.
+     * Check whether branchName is the current branch.
+     * Check for untracked file conflicts.
+     *
+     * Find the split point.
+     * Handle the fast-forward / ancestor cases.
+     * Perform a three-way comparison on all relevant files:
+     *      1.files modified in given branch but not in current branch
+     *      2.files modified in current branch but not in given branch
+     *      3.files modified in both current and given branch in the same way
+     *      4.files not in split point but only in current branch
+     *      5.files not in split point but only in given branch
+     *      6.files in split point, unmodified in current branch, not in given branch
+     *      7.files in split point, unmodified in given branch, not in current branch
+     *      8.files modified in different ways in current and given branch (conflict)
+     * Create a merge commit whose second parent is the given branch head
+     * Print if there is a merge conflict*/
+    public static void merge(String branchName) {
+        // ---- failure checks ----
+        TreeMap<String, String> addStage = getStagingAdd();
+        TreeSet<String> rmStage = getStagingRm();
+        if (!addStage.isEmpty() || !rmStage.isEmpty()) {
+            System.out.println("You have uncommitted changes.");
+            System.exit(0);
+        }
+        File branchFile = Utils.join(BRANCHES_DIR, branchName);
+        if (!branchFile.exists()) {
+            System.out.println("A branch with that name does not exist.");
+            System.exit(0);
+        }
+        if (branchName.equals(getHeadBranch())) {
+            System.out.println("Cannot merge a branch with itself.");
+            System.exit(0);
+        }
+
+        String currentId = getHeadCommitId();
+        String givenId = getBranchCommitId(branchName);
+        Commit currentCommit = readCommit(currentId);
+        Commit givenCommit = readCommit(givenId);
+
+        // Check for untracked files that would be overwritten.
+        checkUntrackedForMerge(currentCommit, givenCommit);
+
+        // ---- find split point ----
+        String splitId = findSplitPoint(currentId, givenId);
+
+        // ---- special cases ----
+        if (splitId.equals(givenId)) {
+            System.out.println("Given branch is an ancestor of the "
+                    + "current branch.");
+            return;
+        }
+        if (splitId.equals(currentId)) {
+            // Fast-forward: move current branch to given branch's commit.
+            checkoutToCommit(givenCommit);
+            setBranchCommitId(getHeadBranch(), givenId);
+            clearStaging();
+            System.out.println("Current branch fast-forwarded.");
+            return;
+        }
+
+        // ---- normal merge ----
+        Commit splitCommit = readCommit(splitId);
+        boolean conflict = performMerge(splitCommit, currentCommit, givenCommit);
+
+        // Merge commit.
+        String msg = "Merged " + branchName + " into " + getHeadBranch() + ".";
+        commitWith(msg, givenId);
+
+        if (conflict) {
+            System.out.println("Encountered a merge conflict.");
+        }
+    }
+
 
     /* ======================== PERSISTENCE HELPERS ======================== */
 
@@ -365,10 +578,17 @@ public class Repository {
         // TODO
     }
 
-    /** Returns true if the blob exists with the given ID. */
-    private static boolean blobExists(String blobId){
-        // TODO
-        return true;
+    /** Returns the branch name with the given commit ID. */
+    private static String getBranchName(String commitId){
+        String result = "";
+        List<String> branchFiles = Utils.plainFilenamesIn(BRANCHES_DIR);
+        if (branchFiles == null) return null;
+        for (String branchName: branchFiles){
+            if (getBranchCommitId(branchName).equals(commitId)){
+                result = branchName;
+            }
+        }
+        return  result;
     }
 
     /** Returns a sorted list of file names in CWD that are untracked.
@@ -393,6 +613,53 @@ public class Repository {
             }
         }
         Collections.sort(result);
+        return result;
+    }
+
+    /** Returns filename->(modified)/(deleted) for files modified but not staged.
+     * CWD      HEAD    addStage    rmStage
+     * modify   y       n           n
+     * modify   -       y           n
+     * delete   -       y           n
+     * delete   y       -/n         n*/
+    private static TreeMap<String, String> getModifiedNotStaged(
+            Commit head, StagingArea stage) {
+        TreeMap<String, String> result = new TreeMap<>();
+        List<String> cwdFiles = Utils.plainFilenamesIn(CWD);
+        Set<String> cwdSet = new TreeSet<>();
+        if (cwdFiles != null) {
+            cwdSet.addAll(cwdFiles);
+        }
+
+        // Check files tracked in HEAD.
+        for (Map.Entry<String, String> e : head.getBlobs().entrySet()) {
+            String name = e.getKey();
+            String blobId = e.getValue();
+            if (cwdSet.contains(name)) {
+                String cur = Utils.sha1(
+                        (Object) Utils.readContents(Utils.join(CWD, name)));
+                if (!cur.equals(blobId) && !stage.isStagedForAddition(name)) {
+                    result.put(name, "(modified)");
+                }
+            } else if (!stage.isStagedForRemoval(name) && !stage.isStagedForAddition(name)) {
+                result.put(name, "(deleted)");
+            }
+        }
+
+        // Check files staged for addition.
+        for (Map.Entry<String, String> e : stage.getAddStage().entrySet()) {
+            String name = e.getKey();
+            String blobId = e.getValue();
+            if (cwdSet.contains(name)) {
+                String cur = Utils.sha1(
+                        (Object) Utils.readContents(Utils.join(CWD, name)));
+                if (!cur.equals(blobId)) {
+                    result.put(name, "(modified)");
+                }
+            } else {
+                result.put(name, "(deleted)");
+            }
+        }
         return result;
     }
 }

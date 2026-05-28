@@ -77,11 +77,6 @@ public class StagingArea implements Serializable {
         return rmStage.contains(filename);
     }
 
-    /** Returns the blob id staged for FILENAME, or null if not staged. */
-    public String getAddBlobId(String filename) {
-        return addStage.get(filename);
-    }
-
     /** Returns a copy of the addition stage. */
     public TreeMap<String, String> getAddStage() {
         return new TreeMap<>(addStage);

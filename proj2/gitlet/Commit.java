@@ -179,7 +179,7 @@ public class Commit implements Serializable {
      * Returns true if this is a merge commit (has two parents).
      */
     public boolean isMerge() {
-        return secondParent != null;
+        return parent != null && secondParent != null;
     }
 
     /**
