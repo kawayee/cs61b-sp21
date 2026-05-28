@@ -42,6 +42,8 @@ public class Commit implements Serializable {
      * This represents the snapshot of all tracked files at this commit.
      */
     private final TreeMap<String, String> blobs;
+    /** SHA-1 hash of this commit. */
+    private transient String cachedId;
 
     /* TODO: fill in the rest of this class. */
     /**
@@ -123,7 +125,10 @@ public class Commit implements Serializable {
      * and the blob mapping, ensuring each unique commit state gets a unique ID.
      */
     public String getId() {
-        return Utils.sha1((Object) Utils.serialize(this));
+        if (cachedId == null) {
+            cachedId = Utils.sha1((Object) Utils.serialize(this));
+        }
+        return cachedId;
     }
 
     /**
@@ -199,7 +204,6 @@ public class Commit implements Serializable {
                 "EEE MMM d HH:mm:ss yyyy Z", java.util.Locale.ENGLISH);
         sb.append("Date: ").append(sdf.format(getTimestamp())).append("\n");
         sb.append(message).append("\n").append("\n");
-        System.out.print(sb);
         return sb.toString();
     }
 

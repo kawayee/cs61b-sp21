@@ -46,7 +46,7 @@ public class StagingArea implements Serializable {
         // 1. Put filename -> blobId into addStage.
         // 2. If filename was staged for removal, unstage it from rmStage.
         addStage.put(filename, blobId);
-        if (isStagedForRemoval(filename)) unstageAddition(filename);
+        if (isStagedForRemoval(filename)) unstageRemoval(filename);
     }
 
     /** Stages FILENAME for removal. */
@@ -54,7 +54,7 @@ public class StagingArea implements Serializable {
         // 1. Add filename to rmStage.
         // 2. If filename was staged for addition, remove it from addStage.
         rmStage.add(filename);
-        if (isStagedForAddition(filename)) unstageRemoval(filename);
+        if (isStagedForAddition(filename)) unstageAddition(filename);
     }
 
     /** Unstages FILENAME from the addition stage. */

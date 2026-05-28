@@ -1,5 +1,7 @@
 package gitlet;
 
+import jh61b.junit.In;
+
 import java.io.File;
 import java.util.*;
 
@@ -223,7 +225,7 @@ public class Repository {
     public static void log() {
         Commit head = getHeadCommit();
         while (head != null) {
-            head.getLogEntry();
+            System.out.print(head.getLogEntry());
             head = Commit.readCommit(head.getParent());
         }
     }
@@ -235,7 +237,7 @@ public class Repository {
             return;
         }
         for (String id : all) {
-            Commit.readCommit(id).getLogEntry();
+            System.out.print(Commit.readCommit(id).getLogEntry());
         }
     }
 
@@ -453,26 +455,19 @@ public class Repository {
      * Find the split point.
      * Handle the fast-forward / ancestor cases.
      * Perform a three-way comparison on all relevant files:
-     *      1.files modified in given branch but not in current branch
-     *      2.files modified in current branch but not in given branch
-     *      3.files modified in both current and given branch in the same way
-     *      4.files not in split point but only in current branch
-     *      5.files not in split point but only in given branch
-     *      6.files in split point, unmodified in current branch, not in given branch
-     *      7.files in split point, unmodified in given branch, not in current branch
-     *      8.files modified in different ways in current and given branch (conflict)
      * Create a merge commit whose second parent is the given branch head
      * Print if there is a merge conflict*/
     public static void merge(String branchName) {
         // ---- failure checks ----
-        TreeMap<String, String> addStage = getStagingAdd();
-        TreeSet<String> rmStage = getStagingRm();
-        if (!addStage.isEmpty() || !rmStage.isEmpty()) {
+        StagingArea stage = StagingArea.readStage();
+        String currentId = getHeadCommitId();
+        String givenId = getBranchCommitId(branchName);
+
+        if (!stage.isEmpty()) {
             System.out.println("You have uncommitted changes.");
             System.exit(0);
         }
-        File branchFile = Utils.join(BRANCHES_DIR, branchName);
-        if (!branchFile.exists()) {
+        if (givenId == null) {
             System.out.println("A branch with that name does not exist.");
             System.exit(0);
         }
@@ -481,13 +476,10 @@ public class Repository {
             System.exit(0);
         }
 
-        String currentId = getHeadCommitId();
-        String givenId = getBranchCommitId(branchName);
-        Commit currentCommit = readCommit(currentId);
-        Commit givenCommit = readCommit(givenId);
-
         // Check for untracked files that would be overwritten.
-        checkUntrackedForMerge(currentCommit, givenCommit);
+        List<String> untrackedFiles = getUntrackedFiles();
+        Commit targetCommit = Commit.readCommit(getBranchCommitId(branchName));
+        checkUntrackedConflict(untrackedFiles, targetCommit);
 
         // ---- find split point ----
         String splitId = findSplitPoint(currentId, givenId);
@@ -500,16 +492,15 @@ public class Repository {
         }
         if (splitId.equals(currentId)) {
             // Fast-forward: move current branch to given branch's commit.
-            checkoutToCommit(givenCommit);
-            setBranchCommitId(getHeadBranch(), givenId);
-            clearStaging();
+            reset(givenId);
             System.out.println("Current branch fast-forwarded.");
             return;
         }
 
         // ---- normal merge ----
-        Commit splitCommit = readCommit(splitId);
-        boolean conflict = performMerge(splitCommit, currentCommit, givenCommit);
+        Commit splitCommit = Commit.readCommit(splitId);
+        Commit currentCommit = getHeadCommit();
+        boolean conflict = performMerge(splitCommit, currentCommit, targetCommit);
 
         // Merge commit.
         String msg = "Merged " + branchName + " into " + getHeadBranch() + ".";
@@ -520,6 +511,81 @@ public class Repository {
         }
     }
 
+    /** Performs the file-level merge between split, current, and given commits.
+     *  Writes files to CWD and updates the staging area.
+     *  Returns true if any conflict was encountered.
+     *      given               current             split       operation
+     *  1.  mod                 no-mod              exist       checkout given and stage
+     *  2.  no-mod              mod                 exist       continue
+     *  3.  mod                 mod                             same, continue
+     *  4.  no-mod[no-exist]    mod[exist]          no-exist    continue
+     *  5.  mod[exist]          no-mod[no-exist]    no-exist    checkout given and stage
+     *  6.  mod[no-exist]       no-mod              exist       remove and untrack
+     *  7.  no-mod              mod[no-exist]       exist       continue
+     *  8.  mod                 mod                             conflict, replace and stage
+     *  */
+    private static boolean performMerge(Commit split, Commit current, Commit given) {
+        StagingArea stage = StagingArea.readStage();
+        boolean conflict = false;
+
+        // Collect all file names across the three commits.
+        Set<String> allFiles = new TreeSet<>();
+        allFiles.addAll(split.getBlobs().keySet());
+        allFiles.addAll(current.getBlobs().keySet());
+        allFiles.addAll(given.getBlobs().keySet());
+
+        for (String file : allFiles) {
+            String splitBlob = split.getBlobs().get(file);
+            String currBlob = current.getBlobs().get(file);
+            String givenBlob = given.getBlobs().get(file);
+
+            boolean modInCurr = !Objects.equals(splitBlob, currBlob);
+            boolean modInGiven = !Objects.equals(splitBlob, givenBlob);
+
+            if (modInGiven && !modInCurr) {
+                // Modified only in given branch.
+                if (givenBlob != null) {
+                    // case 1, case 5: checkout from given & stage.
+                    checkoutCommitFile(given.getId(), file);
+                    stage.stageForAddition(file, given.getBlobId(file));
+                } else {
+                    // case 6: remove & stage for removal.
+                    File f = Utils.join(CWD, file);
+                    if (f.exists()) {
+                        Utils.restrictedDelete(f);
+                    }
+                    stage.stageForRemoval(file);
+                }
+            } else if (!modInGiven && modInCurr) {
+                // Modified only in current branch — keep as is (case 2, case 7, case 4).
+                continue;
+            } else {
+                // Modified in both branches.
+                if (Objects.equals(currBlob, givenBlob)) {
+                    // case 3: same modification — do nothing.
+                    continue;
+                } else {
+                    // case 8: conflict.
+                    conflict = true;
+                    // construct the contents
+                    String currContents = currBlob == null ? "" : new String(readBlob(currBlob));
+                    String givenContents = givenBlob == null ? "" : new String(readBlob(givenBlob));
+                    String merged = "<<<<<<< HEAD\n"
+                            + currContents
+                            + "=======\n"
+                            + givenContents
+                            + ">>>>>>>\n";
+                    // replace the contents (file and blob)
+                    Utils.writeContents(Utils.join(CWD, file), merged);
+                    String newBlobId = saveBlob(merged.getBytes());
+                    stage.stageForAddition(file, newBlobId);
+                }
+            }
+        }
+
+        stage.saveStage();
+        return conflict;
+    }
 
     /* ======================== PERSISTENCE HELPERS ======================== */
 
@@ -573,24 +639,6 @@ public class Repository {
         return Utils.readContents(Utils.join(BLOBS_DIR, blobId));
     }
 
-    /** Write the content of a blob to the specified file. */
-    private static void writeBlobToWorkingFile(String blobId, String fileName){
-        // TODO
-    }
-
-    /** Returns the branch name with the given commit ID. */
-    private static String getBranchName(String commitId){
-        String result = "";
-        List<String> branchFiles = Utils.plainFilenamesIn(BRANCHES_DIR);
-        if (branchFiles == null) return null;
-        for (String branchName: branchFiles){
-            if (getBranchCommitId(branchName).equals(commitId)){
-                result = branchName;
-            }
-        }
-        return  result;
-    }
-
     /** Returns a sorted list of file names in CWD that are untracked.
      *  Untracked = in CWD but neither staged for addition nor tracked by HEAD,
      *  OR staged for removal but re-created in CWD (command rm). */
@@ -606,9 +654,8 @@ public class Repository {
         for (String file : cwdFiles) {
             boolean tracked = head.containsFile(file);
             boolean staged = stage.isStagedForAddition(file);
-            if (!staged && !tracked) {
-                result.add(file);
-            } else if (stage.isStagedForRemoval(file) && !staged) {
+            boolean removed = stage.isStagedForRemoval(file);
+            if ((!staged && !tracked) || removed) {
                 result.add(file);
             }
         }
@@ -661,5 +708,78 @@ public class Repository {
             }
         }
         return result;
+    }
+
+    /**
+     * Returns the SHA-1 of the latest common ancestor (split point).
+     * When multiple common ancestors exist at the same distance from
+     * currentId, picks the one closest to givenId, ensuring a
+     * deterministic result.
+     */
+    private static String findSplitPoint(String currentId, String givenId) {
+        Map<String, Integer> currentDist = getAncestorDistances(currentId);
+        Map<String, Integer> givenDist = getAncestorDistances(givenId);
+
+        String best = null;
+        int bestMax = Integer.MAX_VALUE;
+        int bestGiven = Integer.MAX_VALUE;
+
+        for (String id : currentDist.keySet()) {
+            if (!givenDist.containsKey(id)) {
+                continue;
+            }
+            int dc = currentDist.get(id);
+            int dg = givenDist.get(id);
+            int maxD = Math.max(dc, dg);
+
+            // Prefer smallest max-distance; break ties by smallest given-distance;
+            // final tiebreak by hash for full determinism.
+            if (maxD < bestMax
+                    || (maxD == bestMax && dg < bestGiven)
+                    || (maxD == bestMax && dg == bestGiven
+                    && id.compareTo(best) < 0)) {
+                best = id;
+                bestMax = maxD;
+                bestGiven = dg;
+            }
+        }
+        return best;
+    }
+
+    /** Returns the map of all ancestor commit ids (inclusive) reachable from commitId. */
+    private static Map<String, Integer> getAncestorDistances(String commitId) {
+        Map<String, Integer> ancestors = new HashMap<>();
+
+        if (commitId == null) {
+            return ancestors;
+        }
+
+        Queue<String> queue = new ArrayDeque<>();
+        queue.add(commitId);
+        ancestors.put(commitId, 0);
+
+        while (!queue.isEmpty()) {
+            String id = queue.poll();
+            int dist = ancestors.get(id);
+            Commit c = Commit.readCommit(id);
+
+            if (c == null) {
+                continue;
+            }
+
+            String parent = c.getParent();
+            if (parent != null && !ancestors.containsKey(parent)) {
+                ancestors.put(parent, dist + 1);
+                queue.add(parent);
+            }
+
+            String secondParent = c.getSecondParent();
+            if (secondParent != null && !ancestors.containsKey(secondParent)) {
+                ancestors.put(secondParent, dist + 1);
+                queue.add(secondParent);
+            }
+        }
+
+        return ancestors;
     }
 }
