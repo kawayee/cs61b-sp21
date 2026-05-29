@@ -272,8 +272,7 @@ public class Repository {
      * Clear the staging area, unless the target branch is the current branch.
      * Make HEAD point to the target branch. */
     public static void checkoutBranch(String branchName) {
-        File branchFile = Utils.join(BRANCHES_DIR, branchName);
-        if (!branchFile.exists()) {
+        if (!branchExists(branchName)) {
             System.out.println("No such branch exists.");
             System.exit(0);
         }
@@ -343,9 +342,8 @@ public class Repository {
 
         // === Branches ===
         System.out.println("=== Branches ===");
-        List<String> branches = Utils.plainFilenamesIn(BRANCHES_DIR);
+        List<String> branches = getAllBranchNames();
         if (branches != null) {
-            Collections.sort(branches);
             for (String b : branches) {
                 System.out.println(b.equals(headBranch) ? "*" + b : b);
             }
@@ -385,8 +383,7 @@ public class Repository {
 
     /** Creates a new branch pointing at the current HEAD commit. */
     public static void branch(String branchName) {
-        File branchFile = Utils.join(BRANCHES_DIR, branchName);
-        if (branchFile.exists()) {
+        if (branchExists(branchName)) {
             System.out.println("A branch with that name already exists.");
             System.exit(0);
         }
@@ -396,7 +393,7 @@ public class Repository {
     /** Deletes the branch with the given name. */
     public static void rmBranch(String branchName) {
         File branchFile = Utils.join(BRANCHES_DIR, branchName);
-        if (!branchFile.exists()) {
+        if (!branchExists(branchName)) {
             System.out.println("A branch with that name does not exist.");
             System.exit(0);
         }
@@ -737,14 +734,14 @@ public class Repository {
         }
 
         // Create / update local tracking branch: remoteName/remoteBranchName
-        String localTrackingBranch = remoteName + "-" + remoteBranchName;
+        String localTrackingBranch = remoteName + "/" + remoteBranchName;
         setBranchCommitId(localTrackingBranch, remoteHeadId);
     }
 
     /** Fetches and then merges the remote branch into the current branch. */
     public static void pull(String remoteName, String remoteBranchName) {
         fetch(remoteName, remoteBranchName);
-        String localTrackingBranch = remoteName + "-" + remoteBranchName;
+        String localTrackingBranch = remoteName + "/" + remoteBranchName;
         merge(localTrackingBranch);
     }
 
@@ -773,7 +770,7 @@ public class Repository {
     /** Returns the commit ID that a branch points to (null if branch doesn't exist). */
     private static String getBranchCommitId(String branchName) {
         File branchFile = Utils.join(BRANCHES_DIR, branchName);
-        if (!branchFile.exists()) {
+        if (!branchFile.exists() || !branchFile.isFile()) {
             return null;
         }
         return Utils.readContentsAsString(branchFile).trim();
@@ -782,8 +779,19 @@ public class Repository {
     /** Sets a branch to point to the given commit ID. */
     private static void setBranchCommitId(String branchName, String commitId){
         File branchFile = Utils.join(BRANCHES_DIR, branchName);
+        File parent = branchFile.getParentFile();
+        if (parent != null && !parent.exists()) {
+            parent.mkdirs();
+        }
         Utils.writeContents(branchFile, commitId);
     }
+
+    /** Returns true if branchName exists as a branch file. */
+    private static boolean branchExists(String branchName) {
+        File branchFile = Utils.join(BRANCHES_DIR, branchName);
+        return branchFile.exists() && branchFile.isFile();
+    }
+
 
     /** Sets a remote branch to point to the given commit ID. */
     private static void setRemoteBranchCommitId(String remoteName, String remoteBranchName, String remoteCommitId){
@@ -964,5 +972,31 @@ public class Repository {
         }
         String dirPath = Utils.readContentsAsString(remoteFile).trim();
         return new File(dirPath);
+    }
+
+    /** Returns all branch names, including one-level remote branches like origin/master. */
+    private static List<String> getAllBranchNames() {
+        List<String> result = new ArrayList<>();
+
+        File[] entries = BRANCHES_DIR.listFiles();
+        if (entries == null) {
+            return result;
+        }
+
+        result.addAll(Utils.plainFilenamesIn(BRANCHES_DIR));
+        for (File entry : entries) {
+            if (entry.isDirectory()) {
+                String dirName = entry.getName();
+                List<String> children = Utils.plainFilenamesIn(entry);
+                if (children != null) {
+                    for (String child : children) {
+                        result.add(dirName + "/" + child);
+                    }
+                }
+            }
+        }
+
+        Collections.sort(result);
+        return result;
     }
 }
