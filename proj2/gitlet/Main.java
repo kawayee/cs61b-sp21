@@ -1,5 +1,9 @@
 package gitlet;
 
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
+
 import static gitlet.Utils.*;
 
 /** Driver class for Gitlet, a subset of the Git version-control system.
@@ -10,6 +14,12 @@ public class Main {
     /** Usage: java gitlet.Main ARGS, where ARGS contains
      *  <COMMAND> <OPERAND1> <OPERAND2> ... 
      */
+    private static final Set<String> COMMANDS = new HashSet<>(Arrays.asList(
+            "init", "add", "commit", "rm", "log", "global-log", "find",
+            "status", "checkout", "branch", "rm-branch", "reset", "merge",
+            "add-remote", "rm-remote", "push", "fetch", "pull"
+    ));
+
     public static void main(String[] args) {
         // TODO: what if args is empty?
         if (args.length == 0) {
@@ -19,8 +29,11 @@ public class Main {
 
         String firstArg = args[0];
 
-        // Repository.checkInitialized();
-        if (requiresInitializedRepo(firstArg) && !Repository.isInitialized()) {
+        if (!COMMANDS.contains(firstArg)) {
+            System.out.println("No command with that name exists.");
+            System.exit(0);
+        }
+        if (!firstArg.equals("init") && !Repository.isInitialized()) {
             System.out.println("Not in an initialized Gitlet directory.");
             System.exit(0);
         }
@@ -35,7 +48,7 @@ public class Main {
                 Repository.add(args[1]);
                 break;
             case "commit":
-                if (args.length < 2 || args[1].isEmpty()) {
+                if (args.length < 2 || args[1].trim().isEmpty()) {
                     System.out.println("Please enter a commit message.");
                     System.exit(0);
                 }
@@ -93,6 +106,26 @@ public class Main {
                 validateNumArgs(args, 2);
                 Repository.merge(args[1]);
                 break;
+            case "add-remote":
+                validateNumArgs(args, 3);
+                Repository.addRemote(args[1], args[2]);
+                break;
+            case "rm-remote":
+                validateNumArgs(args, 2);
+                Repository.rmRemote(args[1]);
+                break;
+            case "push":
+                validateNumArgs(args, 3);
+                Repository.push(args[1], args[2]);
+                break;
+            case "fetch":
+                validateNumArgs(args, 3);
+                Repository.fetch(args[1], args[2]);
+                break;
+            case "pull":
+                validateNumArgs(args, 3);
+                Repository.pull(args[1], args[2]);
+                break;
             default:
                 System.out.println("No command with that name exists.");
                 System.exit(0);
@@ -111,9 +144,5 @@ public class Main {
             System.out.println("Incorrect operands.");
             System.exit(0);
         }
-    }
-
-    private static boolean requiresInitializedRepo(String command) {
-        return !command.equals("init");
     }
 }

@@ -1,7 +1,5 @@
 package gitlet;
 
-import jh61b.junit.In;
-
 import java.io.File;
 import java.util.*;
 
@@ -406,7 +404,7 @@ public class Repository {
             System.out.println("Cannot remove the current branch.");
             System.exit(0);
         }
-        Utils.restrictedDelete(branchFile);
+        branchFile.delete();
     }
 
     /** Checks out all files tracked by the given commit; moves current branch head.
@@ -587,6 +585,169 @@ public class Repository {
         return conflict;
     }
 
+    /** Saves remote name -> directory mapping. */
+    public static void addRemote(String remoteName, String remoteDir) {
+        File remoteFile = Utils.join(REMOTES_DIR, remoteName);
+        if (remoteFile.exists()) {
+            System.out.println("A remote with that name already exists.");
+            System.exit(0);
+        }
+        // Convert forward slashes to platform separator.
+        String dirPath = remoteDir.replace("/", File.separator);
+        Utils.writeContents(remoteFile, dirPath);
+    }
+
+    /** Removes the remote with the given name. */
+    public static void rmRemote(String remoteName) {
+        File remoteFile = Utils.join(REMOTES_DIR, remoteName);
+        if (!remoteFile.exists()) {
+            System.out.println("A remote with that name does not exist.");
+            System.exit(0);
+        }
+        remoteFile.delete();
+    }
+
+    /** Pushes current branch's commits to the remote branch.
+     * check whether .gitlet exists in remote
+     * check whether remote branch head is in the history of current local head
+     *
+     * if remote branch head is in the history of current local head, fast-forward
+     * if .gitlet exists in remote but remote branches-directory doesnt have local head, add to remote*/
+    public static void push(String remoteName, String remoteBranchName) {
+        // Check whether .gitlet exists
+        File remoteGitlet = getRemoteGitletDir(remoteName);
+        if (remoteGitlet == null || !remoteGitlet.exists()) {
+            System.out.println("Remote directory not found.");
+            System.exit(0);
+        }
+
+        // Get remote branch head (if exists).
+        File remoteBranchesDir = Utils.join(remoteGitlet, "branches");
+        File remoteBranchFile = Utils.join(remoteBranchesDir, remoteBranchName);
+        String remoteHeadId = null;
+        if (remoteBranchFile.exists()) {
+            remoteHeadId = Utils.readContentsAsString(remoteBranchFile).trim();
+        }
+
+        // Check whether remote head is in local history.
+        String localHeadId = getHeadCommitId();
+        if (remoteHeadId != null) {
+            Map<String, Integer> localAncestors = getAncestorDistances(localHeadId);
+            if (!localAncestors.containsKey(remoteHeadId)) {
+                System.out.println("Please pull down remote changes before pushing.");
+                System.exit(0);
+            }
+        }
+
+        List<String> toPush = collectCommitsToPush(remoteName, localHeadId, remoteHeadId);
+
+        // Copy commits and their blobs to remote.
+        File remoteCommitsDir = Utils.join(remoteGitlet, "commits");
+        File remoteBlobsDir = Utils.join(remoteGitlet, "blobs");
+        for (String cid : toPush) {
+            Commit c = Commit.readCommit(cid);
+            // Copy commit.
+            File remoteCommitFile = Utils.join(remoteCommitsDir, cid);
+            if (!remoteCommitFile.exists()) {
+                Utils.writeObject(remoteCommitFile, c);
+            }
+            // Copy blobs.
+            for (String blobId : c.getBlobs().values()) {
+                File remoteBlobFile = Utils.join(remoteBlobsDir, blobId);
+                if (!remoteBlobFile.exists()) {
+                    Utils.writeContents(remoteBlobFile,
+                            (Object) readBlob(blobId));
+                }
+            }
+        }
+
+        // Reset remote branch to local head.
+        setRemoteBranchCommitId(remoteName, remoteBranchName, localHeadId);
+    }
+
+    /** Collect commits to push (from local head back to remote head). */
+    private static List<String> collectCommitsToPush(String remoteName, String localHeadId, String remoteHeadId) {
+        File remoteGitlet = getRemoteGitletDir(remoteName);
+        File remoteCommitsDir = Utils.join(remoteGitlet, "commits");
+        Map<String, Integer> localAncestors = getAncestorDistances(localHeadId);
+        Map<String, Integer> remoteAncestors = getAncestorDistances(remoteHeadId, remoteCommitsDir);
+        List<String> toPush = new ArrayList<>();
+
+        if (remoteHeadId == null){
+            for (String commitId : localAncestors.keySet()){
+                File remoteCommitFile = Utils.join(remoteCommitsDir, commitId);
+                if (!remoteCommitFile.exists()){
+                    toPush.add(commitId);
+                }
+            }
+            return toPush;
+        }
+
+        for (String commitId : localAncestors.keySet()){
+            if (!remoteAncestors.containsKey(commitId)){
+                toPush.add(commitId);
+            }
+        }
+
+        return toPush;
+    }
+
+    /** Fetches commits from the remote branch into a local tracking branch.
+     * check whether .gitlet exists in remote
+     * check whether remote branches-directory has given branch name
+     *
+     * copy all commits and blobs from given branch in remote (not exists in current)
+     * into [remote name]/[remote branch name] in local branch
+     *
+     * change [remote name]/[remote branch name] to point to the head commit*/
+    public static void fetch(String remoteName, String remoteBranchName) {
+        File remoteGitlet = getRemoteGitletDir(remoteName);
+        if (remoteGitlet == null || !remoteGitlet.exists()) {
+            System.out.println("Remote directory not found.");
+            System.exit(0);
+        }
+        File remoteBranchesDir = Utils.join(remoteGitlet, "branches");
+        File remoteBranchFile = Utils.join(remoteBranchesDir, remoteBranchName);
+        if (!remoteBranchFile.exists()) {
+            System.out.println("That remote does not have that branch.");
+            System.exit(0);
+        }
+
+        File remoteCommitsDir = Utils.join(remoteGitlet, "commits");
+        File remoteBlobsDir = Utils.join(remoteGitlet, "blobs");
+        String remoteHeadId = Utils.readContentsAsString(remoteBranchFile).trim();
+        Map<String, Integer> remoteAncestors = getAncestorDistances(remoteHeadId, remoteCommitsDir);
+
+        for (String commitId : remoteAncestors.keySet()){
+            File localCommitFile = Utils.join(COMMITS_DIR, commitId);
+            if (localCommitFile.exists()){
+                continue;
+            }
+            // read and copy commit
+            Commit c = Utils.readObject(Utils.join(remoteCommitsDir, commitId), Commit.class);
+            Utils.writeObject(localCommitFile, c);
+            // read and copy blobs
+            for (String blobId : c.getBlobs().values()) {
+                File localBlobFile = Utils.join(BLOBS_DIR, blobId);
+                if (!localBlobFile.exists()) {
+                    Utils.writeContents(localBlobFile,
+                            (Object) readBlob(blobId, remoteBlobsDir));
+                }
+            }
+        }
+
+        // Create / update local tracking branch: remoteName/remoteBranchName
+        String localTrackingBranch = remoteName + "-" + remoteBranchName;
+        setBranchCommitId(localTrackingBranch, remoteHeadId);
+    }
+
+    /** Fetches and then merges the remote branch into the current branch. */
+    public static void pull(String remoteName, String remoteBranchName) {
+        fetch(remoteName, remoteBranchName);
+        String localTrackingBranch = remoteName + "-" + remoteBranchName;
+        merge(localTrackingBranch);
+    }
+
     /* ======================== PERSISTENCE HELPERS ======================== */
 
     /** Returns the current branch name from HEAD. */
@@ -624,6 +785,14 @@ public class Repository {
         Utils.writeContents(branchFile, commitId);
     }
 
+    /** Sets a remote branch to point to the given commit ID. */
+    private static void setRemoteBranchCommitId(String remoteName, String remoteBranchName, String remoteCommitId){
+        File remoteGitlet = getRemoteGitletDir(remoteName);
+        File remoteBranchesDir = Utils.join(remoteGitlet, "branches");
+        File remoteBranchFile = Utils.join(remoteBranchesDir, remoteBranchName);
+        Utils.writeContents(remoteBranchFile, remoteCommitId);
+    }
+
     /** Saves blob contents to disk and returns the SHA-1 id. */
     private static String saveBlob(byte[] contents){
         String blobId = Utils.sha1((Object) contents);
@@ -636,7 +805,12 @@ public class Repository {
 
     /** Reads and returns blob (raw file contents) with the given ID. */
     private static byte[] readBlob(String blobId){
-        return Utils.readContents(Utils.join(BLOBS_DIR, blobId));
+        return readBlob(blobId, BLOBS_DIR);
+    }
+
+    /** Reads and returns blob (raw file contents) with the given ID and given dir. */
+    private static byte[] readBlob(String blobId, File blobsDir){
+        return Utils.readContents(Utils.join(blobsDir, blobId));
     }
 
     /** Returns a sorted list of file names in CWD that are untracked.
@@ -748,11 +922,13 @@ public class Repository {
 
     /** Returns the map of all ancestor commit ids (inclusive) reachable from commitId. */
     private static Map<String, Integer> getAncestorDistances(String commitId) {
-        Map<String, Integer> ancestors = new HashMap<>();
+        return getAncestorDistances(commitId, Repository.COMMITS_DIR);
+    }
 
-        if (commitId == null) {
-            return ancestors;
-        }
+    /** Returns the map of all ancestor commit ids (inclusive) reachable from commitId and commitsDir. */
+    private static Map<String, Integer> getAncestorDistances(String commitId, File commitsDir) {
+        Map<String, Integer> ancestors = new HashMap<>();
+        if (commitId == null) return ancestors;
 
         Queue<String> queue = new ArrayDeque<>();
         queue.add(commitId);
@@ -761,11 +937,9 @@ public class Repository {
         while (!queue.isEmpty()) {
             String id = queue.poll();
             int dist = ancestors.get(id);
-            Commit c = Commit.readCommit(id);
+            Commit c = Commit.readCommit(id, commitsDir); // ← 传入目录
 
-            if (c == null) {
-                continue;
-            }
+            if (c == null) continue;
 
             String parent = c.getParent();
             if (parent != null && !ancestors.containsKey(parent)) {
@@ -779,7 +953,16 @@ public class Repository {
                 queue.add(secondParent);
             }
         }
-
         return ancestors;
+    }
+
+    /** Returns the File of the remote .gitlet directory for the given remote name. */
+    private static File getRemoteGitletDir(String remoteName) {
+        File remoteFile = Utils.join(REMOTES_DIR, remoteName);
+        if (!remoteFile.exists()){
+            return null;
+        }
+        String dirPath = Utils.readContentsAsString(remoteFile).trim();
+        return new File(dirPath);
     }
 }

@@ -162,11 +162,19 @@ public class Commit implements Serializable {
      * @return the Commit object, or null if not found
      */
     public static Commit readCommit(String commitId) {
+        return readCommit(commitId, Repository.COMMITS_DIR);
+    }
+
+    /**
+     * Reads and returns the commit object with the given ID and given dir.
+     *
+     * @param commitId the SHA-1 hash of the commit
+     * @return the Commit object, or null if not found
+     */
+    public static Commit readCommit(String commitId, File commitsDir) {
         if (commitId == null) return null;
-        File commitFile = Utils.join(Repository.COMMITS_DIR, commitId);
-        if (!commitFile.exists()) {
-            return null;
-        }
+        File commitFile = Utils.join(commitsDir, commitId);
+        if (!commitFile.exists()) return null;
         return Utils.readObject(commitFile, Commit.class);
     }
 
